@@ -1,0 +1,7 @@
+/target
+*.csv
+*.pdf
+.DS_Store
+payment
+*.md
+!README.md

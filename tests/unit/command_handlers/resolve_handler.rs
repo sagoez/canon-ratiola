@@ -1,0 +1,35 @@
+use payment::adapter::{InMemoryDisputeIndex, InMemoryJournal, JournalTransactionLookup};
+use payment::domain::*;
+use payment::port::{CommandHandler, DisputeIndex};
+use std::sync::Arc;
+
+fn create_mock_lookup() -> Arc<JournalTransactionLookup> {
+    let journal: Arc<dyn payment::port::Journal + Send + Sync> = Arc::new(InMemoryJournal::new());
+    let dispute_index: Arc<dyn DisputeIndex> = Arc::new(InMemoryDisputeIndex::new());
+    Arc::new(JournalTransactionLookup::new(journal, dispute_index))
+}
+
+#[tokio::test]
+async fn test_resolve_requires_existing_transaction() {
+    let resolve = Resolve {
+        client_id: 1,
+        tx_id: 1,
+    };
+
+    let state = AccountState::Active(ActiveAccountState {
+        available: 100.0,
+        held: 0.0,
+        total: 100.0,
+        last_activity: chrono::Utc::now(),
+    });
+
+    let lookup = create_mock_lookup();
+
+    // Load will fail because transaction doesn't exist
+    let result = resolve.load(&state, lookup.as_ref()).await;
+    assert!(
+        result.is_err(),
+        "Should fail to load non-existent transaction"
+    );
+}
+
