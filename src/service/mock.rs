@@ -13,10 +13,10 @@ pub fn generator(output: &str, count: usize) -> Result<(), Box<dyn std::error::E
 
     let mut rng = rand::rng();
     let mut tx_counter = 0u32;
-    let mut all_transactions = Vec::new();
+    let mut all_transactions = Vec::with_capacity(count);
 
     for client_id in 1..=num_clients {
-        let mut client_txs = Vec::new();
+        let mut client_txs = Vec::with_capacity(transactions_per_client);
 
         let num_deposits = transactions_per_client / 2;
         let first_tx = tx_counter;

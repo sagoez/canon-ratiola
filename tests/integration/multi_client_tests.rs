@@ -110,9 +110,9 @@ async fn test_concurrent_client_operations() {
         .collect();
 
     // Wait for all clients
-    let mut client_ids = Vec::new();
+    let mut client_ids = Vec::with_capacity(10);
     for handle in handles {
-        let client_id = handle.await.unwrap();
+        let client_id = handle.await.expect("Failed to process command");
         client_ids.push(client_id);
     }
 

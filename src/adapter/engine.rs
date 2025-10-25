@@ -28,7 +28,7 @@ impl PaymentEngine {
     pub fn new(processor: Arc<dyn Processor>) -> Self {
         Self {
             processor,
-            user_callbacks: Vec::new(),
+            user_callbacks: Vec::with_capacity(10),
         }
     }
 

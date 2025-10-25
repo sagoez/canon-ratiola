@@ -23,9 +23,9 @@ impl InMemoryJournal {
     pub fn new() -> Self {
         Self {
             data: Arc::new(RwLock::new(JournalData {
-                events: Vec::new(),
-                deduplication_index: HashMap::new(),
-                tx_id_index: HashMap::new(),
+                events: Vec::with_capacity(1000000),
+                deduplication_index: HashMap::with_capacity(1000000),
+                tx_id_index: HashMap::with_capacity(1000000),
                 sequence_counter: 0,
             })),
         }
@@ -64,7 +64,7 @@ impl Journal for InMemoryJournal {
             .insert(deduplication_key, envelope.clone());
         data.tx_id_index
             .entry(metadata.tx_id)
-            .or_insert_with(Vec::new)
+            .or_insert_with(|| Vec::with_capacity(1000))
             .push(envelope.clone());
 
         Ok((*envelope).clone())
