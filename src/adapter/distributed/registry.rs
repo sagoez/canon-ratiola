@@ -3,9 +3,10 @@ use crate::domain::{
     AccountState, CommandMetadata, EngineError, PaymentError, TransactionTypeCommand,
 };
 use crate::port::{DisputeIndex, Journal};
-use ractor::{Actor, ActorRef, rpc::CallResult};
-use std::collections::HashSet;
-use std::sync::{Arc, Mutex};
+use ractor::{Actor, ActorRef, registry, rpc::CallResult};
+use std::collections::HashMap;
+use std::sync::Arc;
+use std::time::Duration;
 
 type ClientActorRef = ActorRef<ClientActorMessage>;
 
@@ -18,9 +19,6 @@ type ClientActorRef = ActorRef<ClientActorMessage>;
 /// only one succeeds (the named actor is a singleton in the cluster).
 #[derive(Clone)]
 pub struct ClientRegistry {
-    /// Track which clients we've seen (for final output only, not for routing)
-    /// This is local to this node/process - only used to know which client states to fetch
-    processed_clients: Arc<Mutex<HashSet<u16>>>,
     /// Shared journal (passed to spawned actors)
     journal: Arc<dyn Journal + Send + Sync>,
     /// Shared dispute index (passed to spawned actors)
@@ -35,7 +33,6 @@ impl ClientRegistry {
         dispute_index: Arc<dyn DisputeIndex>,
     ) -> Self {
         Self {
-            processed_clients: Arc::new(Mutex::new(HashSet::new())),
             journal,
             dispute_index,
             namespace: String::new(),
@@ -51,7 +48,6 @@ impl ClientRegistry {
         namespace: String,
     ) -> Self {
         Self {
-            processed_clients: Arc::new(Mutex::new(HashSet::new())),
             journal,
             dispute_index,
             namespace,
@@ -107,14 +103,12 @@ impl ClientRegistry {
         command: TransactionTypeCommand,
         metadata: CommandMetadata,
     ) -> Result<(), PaymentError> {
-        self.processed_clients.lock().unwrap().insert(client_id);
-
         let actor_ref = self.get_or_spawn(client_id).await?;
 
         match actor_ref
             .call(
                 |reply| ClientActorMessage::ProcessCommand(command, metadata, reply),
-                Some(std::time::Duration::from_millis(500)),
+                Some(Duration::from_millis(500)),
             )
             .await
         {
@@ -145,7 +139,7 @@ impl ClientRegistry {
             match actor_ref
                 .call(
                     ClientActorMessage::GetState,
-                    Some(std::time::Duration::from_millis(100)),
+                    Some(Duration::from_millis(100)),
                 )
                 .await
             {
@@ -166,52 +160,58 @@ impl ClientRegistry {
         }
     }
 
-    /// Get all client states that we've processed (for final output)
+    /// Get all client states by querying ractor's global registry
     ///
-    /// This uses our local tracking (processed_clients) to know which clients
-    /// to query, then looks them up in the global registry.
-    pub async fn get_all_states(
-        &self,
-    ) -> Result<std::collections::HashMap<u16, AccountState>, PaymentError> {
-        let mut states = std::collections::HashMap::new();
+    /// Discovers all client actors by listing registered actors and filtering
+    /// for those matching our naming pattern.
+    pub async fn get_all_states(&self) -> Result<HashMap<u16, AccountState>, PaymentError> {
+        let mut states = HashMap::new();
 
-        let client_ids: Vec<u16> = {
-            let clients = self.processed_clients.lock().unwrap();
-            clients.iter().copied().collect()
+        let registered_names = registry::registered();
+
+        let prefix = if self.namespace.is_empty() {
+            "client-".to_string()
+        } else {
+            format!("{}-client-", self.namespace)
         };
 
-        for client_id in client_ids {
-            if let Ok(Some(state)) = self.get_state(client_id).await {
-                states.insert(client_id, state);
-            } else {
-                tracing::warn!("Failed to get state for client {}", client_id);
+        for name in registered_names {
+            if name.starts_with(&prefix) {
+                if let Some(id_str) = name.strip_prefix(&prefix) {
+                    if let Ok(client_id) = id_str.parse::<u16>() {
+                        if let Ok(Some(state)) = self.get_state(client_id).await {
+                            states.insert(client_id, state);
+                        } else {
+                            tracing::warn!("Failed to get state for client {}", client_id);
+                        }
+                    }
+                }
             }
         }
 
         Ok(states)
     }
 
-    /// Shutdown all client actors that we've processed
+    /// Shutdown all client actors in this namespace
     ///
-    /// Note: In a distributed system, this only stops actors we've tracked locally.
-    /// Other nodes might have their own references to the same actors.
+    /// Discovers actors via ractor's global registry and stops them.
+    /// In a distributed system, this only affects actors visible in the global registry.
     pub async fn shutdown_all(&self) {
-        let client_ids: Vec<u16> = {
-            let clients = self.processed_clients.lock().unwrap();
-            clients.iter().copied().collect()
+        let registered_names = registry::registered();
+
+        let prefix = if self.namespace.is_empty() {
+            "client-".to_string()
+        } else {
+            format!("{}-client-", self.namespace)
         };
 
-        for client_id in client_ids {
-            let actor_name = if self.namespace.is_empty() {
-                format!("client-{}", client_id)
-            } else {
-                format!("{}-client-{}", self.namespace, client_id)
-            };
-            if let Some(actor_ref) = ActorRef::<ClientActorMessage>::where_is(actor_name) {
-                actor_ref.stop(None);
+        for name in registered_names {
+            if name.starts_with(&prefix) {
+                if let Some(actor_ref) = ActorRef::<ClientActorMessage>::where_is(name.clone()) {
+                    actor_ref.stop(None);
+                    tracing::debug!("Stopped actor: {}", name);
+                }
             }
         }
-
-        self.processed_clients.lock().unwrap().clear();
     }
 }
