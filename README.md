@@ -5,6 +5,22 @@
 - **Event Sourcing**: All state changes captured as immutable events
 - **Actor-per-Client**: Each client managed by isolated actor (ractor)
 
+From an high level view, the engine is a stateless orchestrator that processes incoming transactions in the following way:
+
+- Command Handlers: Responsible for validating and transforming commands into events
+
+  1. **Load**: Fetches any required state/resources
+  2. **Validate**: Ensures command adheres to business rules
+  3. **Emit**: Produces one or more events based on the command
+  4. **Effect**: Applies side effects (e.g., sending a message or whatever it may be)
+
+- Event Handlers: Responsible for applying events to client state
+
+The engine itself is responsible for sequencing commands/events, ensuring idempotency, and applying event to state.
+
+Each client is represented by a globally unique actor, that manages its own in memory state. The actor receives commands from the engine,
+applies them to its state, and returns the resulting events back to the engine for persistence.
+
 ## Components
 
 | Component | Responsibility |
